@@ -349,9 +349,24 @@ class CCA(Model):
         U, s, Vt = np.linalg.svd(Wx.T @ Cxy @ Wy, full_matrices=False)
         k = self.n_components or len(s)
         self.singular_values_ = s[:k]
-        self.x_weights_ = Wx @ U[:, :k]
+        self.x_weights_ = Wx @ U[:, :k]  # num data channels x n_components
         self.y_weights_ = Wy @ Vt[:k].T
         self.canonical_correlations_ = s[:k]
+
+    def fit_transform(self, eeg: Union[NDArray[Any], Sequence[NDArray[Any]]], env: Union[NDArray[Any], Sequence[NDArray[Any]]]) -> "CCA":
+        """Fit a CCA model and transform the input data.
+
+        Args:
+            eeg (array or list): EEG trials as an array or list of arrays.
+            env (array or list): Stimulus/envelope trials as an array or list.
+
+        Returns:
+            the transformed data.
+        """
+        self.fit(eeg, env)
+        sx = (np.vstack(eeg) - self.x_mean_) @ self.x_weights_
+        sy = (np.vstack(env) - self.y_mean_) @ self.y_weights_
+        return sx, sy
 
     def score(self, eeg: Union[NDArray[Any], Sequence[NDArray[Any]]], env: Union[NDArray[Any], Sequence[NDArray[Any]]]) -> NDArray[Any]:
         """Compute per-component correlations on new data using fitted weights.
