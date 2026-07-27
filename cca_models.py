@@ -338,6 +338,23 @@ class CCA(Model):
         sy = (np.vstack(env) - self.y_mean_) @ self.y_weights_
         return sx, sy
 
+    def transform(self, eeg: NDArray[Any], env: NDArray[Any]) -> Tuple[NDArray[Any], NDArray[Any]]:
+        """Project data onto the fitted canonical directions.
+
+        Args:
+            eeg (ndarray): EEG data, (n_samples, n_channels).
+            env (ndarray): Stimulus/envelope data, (n_samples,) or (n_samples, 1).
+
+        Returns:
+            tuple: ``(x_scores, y_scores)``, each (n_samples, n_components) -- the canonical
+            component time-series for the two views.
+        """
+        E, _ = self._eeg(eeg, self.pre_pca, self.eeg_basis, self.pca_)
+        S = self._apply(self.stim_basis, self._as_2d(env))
+        sx = (E - self.x_mean_) @ self.x_weights_
+        sy = (S - self.y_mean_) @ self.y_weights_
+        return sx, sy
+
     def score(self, eeg: NDArray[Any], env: NDArray[Any]) -> NDArray[Any]:
         """Compute per-component correlations on new data using fitted weights.
 
@@ -351,10 +368,7 @@ class CCA(Model):
         Returns:
             ndarray: 1-D array of canonical correlations (one per component).
         """
-        E, _ = self._eeg(eeg, self.pre_pca, self.eeg_basis, self.pca_)
-        S = self._apply(self.stim_basis, self._as_2d(env))
-        sx = (E - self.x_mean_) @ self.x_weights_
-        sy = (S - self.y_mean_) @ self.y_weights_
+        sx, sy = self.transform(eeg, env)
         return self._correlate(sx, sy)
 
 
