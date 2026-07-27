@@ -4,14 +4,14 @@ Alain de Cheveigne's CCA (de Cheveigne et al., NeuroImage 2018)
 
 The API copies scikit-learn (fit / score, fitted attributes ending in an underscore)
 
-Data everywhere: `eeg` a (n_samples, n_channels) array or a list of such trial arrays;
-`env` a (n_samples,) or (n_samples, 1) array or a list of them.
+Data everywhere: `eeg` a (n_samples, n_channels) array; `env` a (n_samples,) or
+(n_samples, 1) array.
 """
 
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -63,106 +63,77 @@ class Model:
 
     @staticmethod
     def _eeg(
-        eeg: Union[NDArray[Any], Sequence[NDArray[Any]]],
+        eeg: NDArray[Any],
         pre_pca: Optional[int],
         basis: Optional[Callable[[NDArray[Any]], NDArray[Any]]],
         pca: Optional[NDArray[Any]],
-    ) -> Tuple[List[NDArray[Any]], Optional[NDArray[Any]]]:
+    ) -> Tuple[NDArray[Any], Optional[NDArray[Any]]]:
         """Prepare EEG-side features for fit/score.
 
-        The method converts the input into a list of trials, optionally fits or
-        reuses a PCA reduction (when ``pca`` is None it is fitted on the provided
-        trials) and then applies the provided feature ``basis``.
+        The method optionally fits or reuses a PCA reduction (when ``pca`` is None
+        it is fitted on the provided array) and then applies the provided feature
+        ``basis``.
 
         Args:
-            eeg (array or list): (n_samples, n_channels) array or list of trial arrays.
+            eeg (ndarray): (n_samples, n_channels) array.
             pre_pca (int or None): Number of PCA components to apply before basis.
-            basis (callable or None): Feature function to apply to each trial.
+            basis (callable or None): Feature function to apply to the array.
             pca (array or None): Pre-fitted PCA map to reuse (shape (n_channels, k)).
 
         Returns:
-            tuple: ``(trials, pca)`` where ``trials`` is the list of transformed trial arrays
+            tuple: ``(features, pca)`` where ``features`` is the transformed array
             and ``pca`` is the fitted or reused PCA map.
         """
-        trials = Model._trials(eeg)
+        x = Model._as_2d(eeg)
         if pre_pca:
             if pca is None:
-                pca = Model._fit_pca(trials, pre_pca)
-            trials = [t @ pca for t in trials]
-        return Model._apply(basis, trials), pca
+                pca = Model._fit_pca(x, pre_pca)
+            x = x @ pca
+        return Model._apply(basis, x), pca
 
     @staticmethod
     def _apply(
         basis: Optional[Callable[[NDArray[Any]], NDArray[Any]]],
-        trials: List[NDArray[Any]],
-    ) -> List[NDArray[Any]]:
-        """Apply a feature basis to each trial.
+        x: NDArray[Any],
+    ) -> NDArray[Any]:
+        """Apply a feature basis to a data array.
 
-        If ``basis`` is ``None``, the input ``trials`` list is returned unchanged.
-
-        Args:
-            basis (callable or None): Function to transform a single trial array.
-            trials (list): List of (n_samples, n_features) arrays.
-
-        Returns:
-            list: List of transformed trial arrays.
-        """
-        return trials if basis is None else [basis(t) for t in trials]
-
-    @staticmethod
-    def _trials(view: Union[NDArray[Any], Sequence[NDArray[Any]]]) -> List[NDArray[Any]]:
-        """Normalize input into a list of 2-D trial arrays.
-
-        Single arrays are wrapped in a list. 1-D signals are converted to
-        (n_samples, 1) column arrays.
+        If ``basis`` is ``None``, the input array ``x`` is returned unchanged.
 
         Args:
-            view (array or list): Array or list of arrays representing trials.
+            basis (callable or None): Function to transform the array.
+            x (ndarray): (n_samples, n_features) array.
 
         Returns:
-            list: List of 2-D NumPy arrays with shape (n_samples, n_features).
+            ndarray: Transformed array.
         """
-        if isinstance(view, np.ndarray):
-            view = [view]
-        out = []
-        for x in view:
-            x = np.asarray(x, float)
-            out.append(x[:, None] if x.ndim == 1 else x)
-        return out
+        return x if basis is None else basis(x)
 
     # ---- numeric core (the algorithm) ---------------------------------------
 
     @staticmethod
     def _covariances(
-        X: Union[NDArray[Any], Sequence[NDArray[Any]]],
-        Y: Union[NDArray[Any], Sequence[NDArray[Any]]],
+        X: NDArray[Any],
+        Y: NDArray[Any],
     ) -> Tuple[NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any], NDArray[Any]]:
-        """Compute pooled, mean-removed covariances across trials.
+        """Compute mean-removed covariances for two views.
 
         This routine computes the block covariances for two multivariate views
-        without concatenating all trials into a single array, returning the
+        using numpy's covariance estimator (``np.cov``), returning the
         covariances and per-view means.
 
         Args:
-            X (array or list): (n_samples, n_features) array or list of trial arrays.
-            Y (array or list): (n_samples, n_features) array or list of trial arrays.
+            X (ndarray): (n_samples, n_features) array.
+            Y (ndarray): (n_samples, n_features) array.
 
         Returns:
             tuple: ``(Cxx, Cyy, Cxy, mx, my)`` where Cxx and Cyy are the auto-covariances,
-            Cxy the cross-covariance, and ``mx``/``my`` the pooled means of each view.
+            Cxy the cross-covariance, and ``mx``/``my`` the means of each view.
         """
-        Xs, Ys = Model._trials(X), Model._trials(Y)
-        n = sum(len(x) for x in Xs)
-        mx = sum(x.sum(0) for x in Xs) / n
-        my = sum(y.sum(0) for y in Ys) / n
-        p, q = Xs[0].shape[1], Ys[0].shape[1]
-        Cxx, Cyy, Cxy = np.zeros((p, p)), np.zeros((q, q)), np.zeros((p, q))
-        for x, y in zip(Xs, Ys):
-            x, y = x - mx, y - my
-            Cxx += x.T @ x
-            Cyy += y.T @ y
-            Cxy += x.T @ y
-        return Cxx / n, Cyy / n, Cxy / n, mx, my
+        X, Y = Model._as_2d(X), Model._as_2d(Y)
+        p = X.shape[1]
+        C = np.cov(np.hstack([X, Y]), rowvar=False, bias=True)
+        return C[:p, :p], C[p:, p:], C[:p, p:], X.mean(0), Y.mean(0)
 
     @staticmethod
     def _whitener(cov: NDArray[Any], keep: Optional[int], rcond: float) -> NDArray[Any]:
@@ -191,20 +162,19 @@ class Model:
         return V/np.sqrt(ev)
 
     @staticmethod
-    def _fit_pca(trials: List[NDArray[Any]], k: int) -> NDArray[Any]:
+    def _fit_pca(x: NDArray[Any], k: int) -> NDArray[Any]:
         """Fit a PCA map that reduces channel dimensionality to ``k`` components.
 
         Args:
-            trials (list): List of (n_samples, n_channels) arrays.
+            x (ndarray): (n_samples, n_channels) array.
             k (int): Number of principal components to retain.
 
         Returns:
             ndarray: PCA map with shape (n_channels, k) whose columns are the top-k
             principal directions.
         """
-        n = sum(len(t) for t in trials)
-        mu = sum(t.sum(0) for t in trials) / n
-        cov = sum((t - mu).T @ (t - mu) for t in trials) / n
+        mu = x.mean(0)
+        cov = (x - mu).T @ (x - mu) / len(x)
         _ev, V = np.linalg.eigh(0.5 * (cov + cov.T))
         return V[:, ::-1][:, :k]
 
@@ -230,7 +200,7 @@ class Model:
     # feature helpers:
 
     @staticmethod
-    def _time_lag(x: Union[NDArray[Any], Sequence[Any]], n_lags: int) -> NDArray[Any]:
+    def _time_lag(x: NDArray[Any], n_lags: int) -> NDArray[Any]:
         """Build a time-lagged feature matrix for a signal.
 
         The output contains lagged copies of the input signal from lag 0 up to
@@ -252,7 +222,7 @@ class Model:
 
     @staticmethod
     def _smoother(
-        x: Union[NDArray[Any], Sequence[Any]],
+        x: NDArray[Any],
         n_bands: int = 21,
         min_samples: int = 2,
         max_samples: int = 128,
@@ -303,7 +273,7 @@ class Model:
         return out
 
     @staticmethod
-    def _as_2d(x: Union[NDArray[Any], Sequence[Any]]) -> NDArray[Any]:
+    def _as_2d(x: NDArray[Any]) -> NDArray[Any]:
         """Ensure an array is two-dimensional.
 
         A 1-D array is converted to shape ``(n_samples, 1)``; a 2-D array is
@@ -329,12 +299,12 @@ class CCA(Model):
     This class implements a scikit-learn-like ``fit`` / ``score`` API.
     """
 
-    def fit(self, eeg: Union[NDArray[Any], Sequence[NDArray[Any]]], env: Union[NDArray[Any], Sequence[NDArray[Any]]]) -> "CCA":
+    def fit(self, eeg: NDArray[Any], env: NDArray[Any]) -> "CCA":
         """Fit a CCA model to EEG and stimulus data.
 
         Args:
-            eeg (array or list): EEG trials as an array or list of arrays.
-            env (array or list): Stimulus/envelope trials as an array or list.
+            eeg (ndarray): EEG data.
+            env (ndarray): Stimulus/envelope data.
 
         Returns:
             CCA: ``self`` fitted in-place with attributes ``x_weights_``, ``y_weights_``
@@ -342,7 +312,7 @@ class CCA(Model):
         """
 
         E, self.pca_ = self._eeg(eeg, self.pre_pca, self.eeg_basis, None)
-        S = self._apply(self.stim_basis, self._trials(env))
+        S = self._apply(self.stim_basis, self._as_2d(env))
         Cxx, Cyy, Cxy, self.x_mean_, self.y_mean_ = self._covariances(E, S)
         Wx = self._whitener(Cxx, self.eeg_keep, self.rcond)
         Wy = self._whitener(Cyy, self.stim_keep, self.rcond)
@@ -368,23 +338,23 @@ class CCA(Model):
         sy = (np.vstack(env) - self.y_mean_) @ self.y_weights_
         return sx, sy
 
-    def score(self, eeg: Union[NDArray[Any], Sequence[NDArray[Any]]], env: Union[NDArray[Any], Sequence[NDArray[Any]]]) -> NDArray[Any]:
+    def score(self, eeg: NDArray[Any], env: NDArray[Any]) -> NDArray[Any]:
         """Compute per-component correlations on new data using fitted weights.
 
         The method projects new EEG and stimulus trials using the fitted weights
         and returns the Pearson correlation per canonical component.
 
         Args:
-            eeg (array or list): New EEG trials.
-            env (array or list): New stimulus trials.
+            eeg (ndarray): New EEG data.
+            env (ndarray): New stimulus data.
 
         Returns:
             ndarray: 1-D array of canonical correlations (one per component).
         """
         E, _ = self._eeg(eeg, self.pre_pca, self.eeg_basis, self.pca_)
-        S = self._apply(self.stim_basis, self._trials(env))
-        sx = (np.vstack(E) - self.x_mean_) @ self.x_weights_
-        sy = (np.vstack(S) - self.y_mean_) @ self.y_weights_
+        S = self._apply(self.stim_basis, self._as_2d(env))
+        sx = (E - self.x_mean_) @ self.x_weights_
+        sy = (S - self.y_mean_) @ self.y_weights_
         return self._correlate(sx, sy)
 
 
@@ -396,7 +366,7 @@ class Regression(Model):
     attribute of the instance.
     """
 
-    def fit(self, eeg: Union[NDArray[Any], Sequence[NDArray[Any]]], env: Union[NDArray[Any], Sequence[NDArray[Any]]]) -> "Regression":
+    def fit(self, eeg: NDArray[Any], env: NDArray[Any]) -> "Regression":
         """Fit a regularized least-squares map.
 
         For ``type=='backward'`` the model learns to predict stimulus from EEG.
@@ -404,22 +374,22 @@ class Regression(Model):
         stimulus feature representation.
 
         Args:
-            eeg (array or list): EEG trials.
-            env (array or list): Stimulus trials.
+            eeg (ndarray): EEG data.
+            env (ndarray): Stimulus data.
 
         Returns:
             Regression: ``self`` fitted in-place with attribute ``coef_``.
         """
 
         E, self.pca_ = self._eeg(eeg, self.pre_pca, self.eeg_basis, None)
-        S = self._apply(self.stim_basis, self._trials(env))
-        X, Y, keep = ((E, self._trials(env), self.eeg_keep) if self.type == "backward"
-                      else (S, self._trials(eeg), self.stim_keep))
+        S = self._apply(self.stim_basis, self._as_2d(env))
+        X, Y, keep = ((E, self._as_2d(env), self.eeg_keep) if self.type == "backward"
+                      else (S, self._as_2d(eeg), self.stim_keep))
         Cxx, _Cyy, Cxy, self.x_mean_, self.y_mean_ = self._covariances(X, Y)
         Wx = self._whitener(Cxx, keep, self.rcond)
         self.coef_ = (Wx @ Wx.T) @ Cxy
 
-    def score(self, eeg: Union[NDArray[Any], Sequence[NDArray[Any]]], env: Union[NDArray[Any], Sequence[NDArray[Any]]]) -> NDArray[Any]:
+    def score(self, eeg: NDArray[Any], env: NDArray[Any]) -> NDArray[Any]:
         """Score predictions as per-output Pearson correlations.
 
         For forward models this returns correlations per EEG channel (caller may
@@ -427,17 +397,17 @@ class Regression(Model):
         reconstruction correlation of the stimulus.
 
         Args:
-            eeg (array or list): EEG trials.
-            env (array or list): Stimulus trials.
+            eeg (ndarray): EEG data.
+            env (ndarray): Stimulus data.
 
         Returns:
             ndarray: 1-D array of correlation values, one per target dimension.
         """
         E, _ = self._eeg(eeg, self.pre_pca, self.eeg_basis, self.pca_)
-        S = self._apply(self.stim_basis, self._trials(env))
-        X, Y = (E, self._trials(env)) if self.type == "backward" else (S, self._trials(eeg))
-        pred = (np.vstack(X) - self.x_mean_) @ self.coef_ + self.y_mean_
-        return self._correlate(pred, np.vstack(Y))
+        S = self._apply(self.stim_basis, self._as_2d(env))
+        X, Y = (E, self._as_2d(env)) if self.type == "backward" else (S, self._as_2d(eeg))
+        pred = (X - self.x_mean_) @ self.coef_ + self.y_mean_
+        return self._correlate(pred, Y)
 
 
 MODEL_PRESETS = {
@@ -457,16 +427,21 @@ MODEL_PRESETS = {
 
 MODEL_TYPES = {"cca": CCA, "forward": Regression, "backward": Regression}
 
-def model(name: str) -> Model:
-    """Instantiate a preset model by name.
+def model(name: Optional[str] = None, **params: Any) -> Model:
+    """Build a model from a preset, a preset with overrides, or explicit parameters.
 
     Args:
-        name (str): Key name of a preset in ``_PRESETS`` (for example, "cca3").
+        name: preset key in ``MODEL_PRESETS`` (for example, "cca3"), or None to build the
+            model entirely from ``params``.
+        **params: ``Model`` constructor fields that override the preset (or define the model
+            when ``name`` is None) -- type, eeg_basis, stim_basis, pre_pca, eeg_keep,
+            stim_keep, n_components, rcond. ``type`` must resolve from the preset or params.
 
     Returns:
-        Model: An instance of the configured model class (``CCA`` or ``Regression``).
+        An unfitted model instance -- ``CCA`` when type == "cca", otherwise ``Regression``.
     """
-    assert name in MODEL_PRESETS, f"Unknown model preset '{name}'"
-    params = MODEL_PRESETS[name]
-    assert params["type"] in MODEL_TYPES, f"Unknown model type '{params['type']}'"
-    return MODEL_TYPES[params["type"]](**params)
+    assert name is None or name in MODEL_PRESETS, f"Unknown model preset '{name}'"
+    config = dict(MODEL_PRESETS[name]) if name is not None else {}
+    config.update(params)
+    assert config.get("type") in MODEL_TYPES, f"Unknown or missing model type '{config.get('type')}'"
+    return MODEL_TYPES[config["type"]](**config)
