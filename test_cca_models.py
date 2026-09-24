@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 
-from cca_models import Model, CCA, Regression, model
+from cca_models import Model, CCA, ForwardRegressionModel, BackwardRegressionModel, model
 
 
 class TestCCAModels(unittest.TestCase):
@@ -12,10 +12,10 @@ class TestCCAModels(unittest.TestCase):
         a1 = np.arange(5.0)
         a2 = np.arange(6.0).reshape(3, 2)
         # _trials should convert 1-D to (n,1) and leave 2-D alone
-        t1 = Model._trials(a1)
+        t1 = Model._normalize_trials_as_list(a1)
         self.assertEqual(len(t1), 1)
         self.assertEqual(t1[0].shape, (5, 1))
-        t2 = Model._trials(a2)
+        t2 = Model._normalize_trials_as_list(a2)
         self.assertEqual(t2[0].shape, (3, 2))
 
         # _as_2d keeps 2d and wraps 1d
@@ -28,7 +28,7 @@ class TestCCAModels(unittest.TestCase):
 
     def test_time_lag_and_moving_average_and_smoother(self):
         x = np.arange(1.0, 11.0)
-        tl = Model._time_lag(x, 3)
+        tl = Model._add_time_lags(x, 3)
         # for a single channel, shape should be (n_samples, n_lags)
         self.assertEqual(tl.shape, (10, 3))
         # first row should have only lag 0 filled (others zero)
@@ -49,12 +49,12 @@ class TestCCAModels(unittest.TestCase):
         # simple two-trial signals
         x = np.vstack([np.random.randn(50, 3), np.random.randn(60, 3)])
         y = np.vstack([np.random.randn(50, 2), np.random.randn(60, 2)])
-        Cxx, Cyy, Cxy, mx, my = Model._covariances([x[:50], x[50:]], [y[:50], y[50:]])
+        Cxx, Cyy, Cxy, mx, my = Model._compute_covariances([x[:50], x[50:]], [y[:50], y[50:]])
         self.assertEqual(Cxx.shape, (3, 3))
         self.assertEqual(Cyy.shape, (2, 2))
         self.assertEqual(Cxy.shape, (3, 2))
 
-        W = Model._whitener(Cxx, keep=None, rcond=1e-12)
+        W = Model._compute_whitener(Cxx, keep=None, rcond=1e-12)
         # whitened covariance should be approximately orthonormal when applied
         Xc = (x - mx) @ W
         cov = (Xc.T @ Xc) / Xc.shape[0]
@@ -68,7 +68,7 @@ class TestCCAModels(unittest.TestCase):
         w = np.array([[1.0, 0.5, -0.3]])  # shape (1, channels)
         eeg = env[:, None] @ w + 0.01 * np.random.randn(n, 3)
 
-        cca = CCA(type="cca", n_components=1)
+        cca = CCA(n_components=1)
         cca.fit(eeg, env)
         corr = cca.score(eeg, env)
         # correlation should be high for first canonical component
@@ -81,7 +81,7 @@ class TestCCAModels(unittest.TestCase):
         w = np.array([[0.8, -0.4, 0.2]])
         eeg = env[:, None] @ w + 0.02 * np.random.randn(n, 3)
 
-        reg = Regression(type="backward", eeg_keep=None)
+        reg = BackwardRegressionModel(eeg_keep=None)
         reg.fit(eeg, env)
         corr = reg.score(eeg, env)
         # single-output reconstruction correlation should be high
@@ -97,7 +97,7 @@ class TestCCAModels(unittest.TestCase):
         vars = np.array([4.0, 1.0, 0.25])
         t1 = rng.randn(100, 3) * np.sqrt(vars)
         t2 = rng.randn(120, 3) * np.sqrt(vars)
-        P = Model._fit_pca([t1, t2], 2)
+        P = Model._fit_pca(np.vstack([t1, t2]), 2)
         # shape should be (n_channels, k)
         self.assertEqual(P.shape, (3, 2))
         # columns should be orthonormal

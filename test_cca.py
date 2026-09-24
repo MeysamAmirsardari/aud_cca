@@ -54,7 +54,7 @@ class TestCustomCCA(unittest.TestCase):
         cls.Y = np.hstack([Y_latent, np.random.randn(cls.n_samples, cls.Y_noise_dim)])
         
         # 5. Fit the custom CCA model
-        cls.cca = CCA('test', n_components=cls.n_components)
+        cls.cca = CCA(n_components=cls.n_components)
         cls.Xc, cls.Yc = cls.cca.fit_transform(cls.X, cls.Y)
 
     def test_canonical_correlations(self):
