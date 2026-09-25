@@ -1,7 +1,8 @@
 import unittest
 import numpy as np
 
-from cca_models import Model, CCA, ForwardRegressionModel, BackwardRegressionModel, model
+from cca_models import Model, CCA, adc_model
+from cca_models import ForwardRegressionModel, BackwardRegressionModel
 
 
 class TestCCAModels(unittest.TestCase):
@@ -88,7 +89,20 @@ class TestCCAModels(unittest.TestCase):
         self.assertGreater(corr[0], 0.9)
 
     def test_model_factory(self):
-        m = model("cca1")
+        """Just test to make sure we can create all the standard models using
+        the model factory.
+        1G"""
+        m = adc_model("forward")
+        self.assertIsInstance(m, ForwardRegressionModel)
+        m = adc_model("backward")
+        self.assertIsInstance(m, BackwardRegressionModel)
+        m = adc_model("cca1")
+        self.assertIsInstance(m, CCA)
+        m = adc_model("cca2")
+        self.assertIsInstance(m, CCA)
+        m = adc_model("cca2plus")
+        self.assertIsInstance(m, CCA)
+        m = adc_model("cca3")
         self.assertIsInstance(m, CCA)
 
     def test_fit_pca(self):

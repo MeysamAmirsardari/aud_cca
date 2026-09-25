@@ -464,9 +464,11 @@ class BackwardRegressionModel(Regression):
         super().__init__(*args, **kwargs)
 
 
-def model(name: str) -> Model:
+def adc_model(name: str) -> Model:
     """Create one of the standard models from de Cheveigne's paper based on the 
-    given name.
+    given name, varying the number of PCA components and the amount of
+    smoothing. 
+      Paper: https://doi.org/10.1016/j.neuroimage.2018.01.033.
 
     Args:
       name (str): Name of the model to create. Must be one of "forward", 
