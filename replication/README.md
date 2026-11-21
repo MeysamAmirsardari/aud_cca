@@ -7,6 +7,7 @@ Figures 2–7. `figures.py` only draws.
     python replication/replicate.py            # all eight subjects
     python replication/replicate.py EL         # one subject
     python replication/figures.py              # redraw from saved results
+    python replication/compare.py              # paper vs NoiseTools vs Python
 
 Subjects can run in separate shells (about 7 GB each), then `figures.py`
 redraws the cohort figures.
